@@ -22,6 +22,19 @@ await db.exec(`
   )
 `);
 
+// Create event registrations table if it doesn't exist
+await db.exec(`
+  CREATE TABLE IF NOT EXISTS event_registrations (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    eventId INTEGER NOT NULL,
+    userId INTEGER NOT NULL,
+    registeredAt TEXT DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (eventId) REFERENCES events(id) ON DELETE CASCADE,
+    FOREIGN KEY (userId) REFERENCES users(id) ON DELETE CASCADE,
+    UNIQUE(eventId, userId)
+  )
+`);
+
 export const Event = {
   // Get all events
   async findAll() {
@@ -64,5 +77,62 @@ export const Event = {
   // Delete event
   async delete(id) {
     await db.run('DELETE FROM events WHERE id = ?', id);
+  },
+
+  // Register user for an event
+  async registerUser(eventId, userId) {
+    try {
+      await db.run(
+        'INSERT INTO event_registrations (eventId, userId) VALUES (?, ?)',
+        [eventId, userId]
+      );
+      return { success: true };
+    } catch (error) {
+      if (error.message.includes('UNIQUE constraint failed')) {
+        throw new Error('User is already registered for this event');
+      }
+      throw error;
+    }
+  },
+
+  // Unregister user from an event
+  async unregisterUser(eventId, userId) {
+    const result = await db.run(
+      'DELETE FROM event_registrations WHERE eventId = ? AND userId = ?',
+      [eventId, userId]
+    );
+    if (result.changes === 0) {
+      throw new Error('User is not registered for this event');
+    }
+    return { success: true };
+  },
+
+  // Get all users registered for an event
+  async getRegisteredUsers(eventId) {
+    return await db.all(`
+      SELECT u.id, u.username, u.email, er.registeredAt
+      FROM event_registrations er
+      JOIN users u ON er.userId = u.id
+      WHERE er.eventId = ?
+    `, eventId);
+  },
+
+  // Check if user is registered for an event
+  async isUserRegistered(eventId, userId) {
+    const registration = await db.get(
+      'SELECT * FROM event_registrations WHERE eventId = ? AND userId = ?',
+      [eventId, userId]
+    );
+    return !!registration;
+  },
+
+  // Get all events user is registered for
+  async getUserRegisteredEvents(userId) {
+    return await db.all(`
+      SELECT e.*, er.registeredAt
+      FROM event_registrations er
+      JOIN events e ON er.eventId = e.id
+      WHERE er.userId = ?
+    `, userId);
   }
 }; 
