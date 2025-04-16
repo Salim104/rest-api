@@ -1,8 +1,16 @@
 import express from 'express';
 import { authenticateToken } from '../util/auth.js';
+import upload from '../util/upload.js';
 import { Event } from '../models/event.js';
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
 
 const router = express.Router();
+
+// Get __dirname equivalent in ES modules
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 // Get all events (public)
 router.get('/', async (req, res) => {
@@ -27,28 +35,80 @@ router.get('/:id', async (req, res) => {
   }
 });
 
-// Create event (protected)
-router.post('/', authenticateToken, async (req, res) => {
+// Create event with image upload (protected)
+router.post('/', authenticateToken, upload.single('image'), async (req, res) => {
   try {
+    console.log('Request body:', req.body);
+    console.log('File:', req.file);
+    
+    // Clean up form field names (trim whitespace)
+    const cleanBody = {};
+    Object.keys(req.body).forEach(key => {
+      cleanBody[key.trim()] = req.body[key];
+    });
+    
+    console.log('Cleaned body:', cleanBody);
+    
+    // Check if required fields are provided
+    if (!cleanBody.title || !cleanBody.description || !cleanBody.date || !cleanBody.location) {
+      return res.status(400).json({ 
+        message: 'Missing required fields. Please provide title, description, date, and location.',
+        receivedFields: Object.keys(req.body),
+        cleanedFields: Object.keys(cleanBody)
+      });
+    }
+    
+    // Build event data from request
     const eventData = {
-      title: req.body.title,
-      description: req.body.description,
-      date: req.body.date,
-      location: req.body.location,
+      title: cleanBody.title,
+      description: cleanBody.description,
+      date: cleanBody.date,
+      location: cleanBody.location,
       createdBy: req.user.id
     };
     
+    // If image was uploaded, add the URL to eventData
+    if (req.file) {
+      console.log('Image file uploaded:', req.file);
+      // Generate relative path for the image URL
+      const imageUrl = `/images/${req.file.filename}`;
+      console.log('Generated image URL:', imageUrl);
+      eventData.imageUrl = imageUrl;
+    } else {
+      console.log('No image file uploaded');
+    }
+    
+    console.log('Event data before creation:', eventData);
     const newEvent = await Event.create(eventData);
+    console.log('New event created:', newEvent);
+    
     res.status(201).json(newEvent);
   } catch (error) {
+    // If there was an error and file was uploaded, delete it
+    if (req.file) {
+      console.log('Error occurred, deleting uploaded file:', req.file.path);
+      fs.unlinkSync(req.file.path);
+    }
+    
     console.error('Error creating event:', error);
     res.status(400).json({ message: error.message });
   }
 });
 
-// Update event (protected - only creator)
-router.put('/:id', authenticateToken, async (req, res) => {
+// Update event with image upload (protected - only creator)
+router.put('/:id', authenticateToken, upload.single('image'), async (req, res) => {
   try {
+    console.log('Update request body:', req.body);
+    console.log('Update file:', req.file);
+    
+    // Clean up form field names (trim whitespace)
+    const cleanBody = {};
+    Object.keys(req.body).forEach(key => {
+      cleanBody[key.trim()] = req.body[key];
+    });
+    
+    console.log('Cleaned update body:', cleanBody);
+    
     const event = await Event.findById(req.params.id);
     
     if (!event) {
@@ -62,22 +122,54 @@ router.put('/:id', authenticateToken, async (req, res) => {
     // Check if the user is the creator of the event
     if (eventCreatorId !== currentUserId) {
       return res.status(403).json({ 
-        message: 'Not authorized to update this event. Only the creator can update it.',
-        eventCreator: eventCreatorId,
-        currentUser: currentUserId
+        message: 'Not authorized to update this event. Only the creator can update it.'
       });
     }
 
+    // Prepare update data
     const eventData = {
-      title: req.body.title || event.title,
-      description: req.body.description || event.description,
-      date: req.body.date || event.date,
-      location: req.body.location || event.location
+      title: cleanBody.title,
+      description: cleanBody.description,
+      date: cleanBody.date,
+      location: cleanBody.location
     };
 
+    // If a new image was uploaded, update the image URL
+    if (req.file) {
+      console.log('New image uploaded for update:', req.file);
+      // Generate relative path for the image URL
+      const imageUrl = `/images/${req.file.filename}`;
+      console.log('Generated new image URL:', imageUrl);
+      eventData.imageUrl = imageUrl;
+      
+      // If there was an old image, delete it
+      if (event.imageUrl) {
+        const oldImagePath = path.join(__dirname, '..', 'public', event.imageUrl);
+        console.log('Attempting to delete old image at:', oldImagePath);
+        if (fs.existsSync(oldImagePath)) {
+          fs.unlinkSync(oldImagePath);
+          console.log('Old image deleted successfully');
+        } else {
+          console.log('Old image file not found');
+        }
+      }
+    } else {
+      console.log('No new image uploaded for update');
+    }
+
+    console.log('Updating event with data:', eventData);
     const updatedEvent = await Event.update(req.params.id, eventData);
+    console.log('Event updated:', updatedEvent);
+    
     res.json(updatedEvent);
   } catch (error) {
+    // If there was an error and file was uploaded, delete it
+    if (req.file) {
+      console.log('Error occurred, deleting uploaded file:', req.file.path);
+      fs.unlinkSync(req.file.path);
+    }
+    
+    console.error('Error updating event:', error);
     res.status(400).json({ message: error.message });
   }
 });
@@ -98,15 +190,26 @@ router.delete('/:id', authenticateToken, async (req, res) => {
     // Check if the user is the creator of the event
     if (eventCreatorId !== currentUserId) {
       return res.status(403).json({ 
-        message: 'Not authorized to delete this event. Only the creator can delete it.',
-        eventCreator: eventCreatorId,
-        currentUser: currentUserId
+        message: 'Not authorized to delete this event. Only the creator can delete it.'
       });
+    }
+
+    // If there was an image, delete it
+    if (event.imageUrl) {
+      const imagePath = path.join(__dirname, '..', 'public', event.imageUrl);
+      console.log('Attempting to delete image at:', imagePath);
+      if (fs.existsSync(imagePath)) {
+        fs.unlinkSync(imagePath);
+        console.log('Image deleted successfully');
+      } else {
+        console.log('Image file not found');
+      }
     }
 
     await Event.delete(req.params.id);
     res.json({ message: 'Event deleted successfully' });
   } catch (error) {
+    console.error('Error deleting event:', error);
     res.status(500).json({ message: error.message });
   }
 });

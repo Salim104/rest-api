@@ -16,11 +16,24 @@ await db.exec(`
     date TEXT NOT NULL,
     location TEXT NOT NULL,
     createdBy INTEGER NOT NULL,
+    imageUrl TEXT,
     createdAt TEXT DEFAULT CURRENT_TIMESTAMP,
     updatedAt TEXT DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (createdBy) REFERENCES users(id)
   )
 `);
+
+// Check if imageUrl column exists, if not add it
+const tableInfo = await db.all("PRAGMA table_info(events)");
+const hasImageUrl = tableInfo.some(column => column.name === 'imageUrl');
+if (!hasImageUrl) {
+  try {
+    await db.exec('ALTER TABLE events ADD COLUMN imageUrl TEXT');
+    console.log('Added imageUrl column to events table');
+  } catch (error) {
+    console.error('Error adding imageUrl column:', error.message);
+  }
+}
 
 // Create event registrations table if it doesn't exist
 await db.exec(`
@@ -49,15 +62,15 @@ export const Event = {
   // Create new event
   async create(eventData) {
     console.log('Creating event with data:', eventData); // Debug log
-    const { title, description, date, location, createdBy } = eventData;
+    const { title, description, date, location, createdBy, imageUrl } = eventData;
     
     if (!createdBy) {
       throw new Error('createdBy is required');
     }
 
     const result = await db.run(
-      'INSERT INTO events (title, description, date, location, createdBy) VALUES (?, ?, ?, ?, ?)',
-      [title, description, date, location, createdBy]
+      'INSERT INTO events (title, description, date, location, createdBy, imageUrl) VALUES (?, ?, ?, ?, ?, ?)',
+      [title, description, date, location, createdBy, imageUrl || null]
     );
     
     const newEvent = await this.findById(result.lastID);
@@ -66,11 +79,29 @@ export const Event = {
 
   // Update event
   async update(id, eventData) {
-    const { title, description, date, location } = eventData;
+    const { title, description, date, location, imageUrl } = eventData;
+    
+    // Get current event data to fill in any missing fields
+    const currentEvent = await this.findById(id);
+    if (!currentEvent) {
+      throw new Error('Event not found');
+    }
+    
+    // Only update the image if a new one is provided
+    const updatedImageUrl = imageUrl !== undefined ? imageUrl : currentEvent.imageUrl;
+    
     await db.run(
-      'UPDATE events SET title = ?, description = ?, date = ?, location = ?, updatedAt = CURRENT_TIMESTAMP WHERE id = ?',
-      [title, description, date, location, id]
+      'UPDATE events SET title = ?, description = ?, date = ?, location = ?, imageUrl = ?, updatedAt = CURRENT_TIMESTAMP WHERE id = ?',
+      [
+        title || currentEvent.title,
+        description || currentEvent.description,
+        date || currentEvent.date,
+        location || currentEvent.location,
+        updatedImageUrl,
+        id
+      ]
     );
+    
     return await this.findById(id);
   },
 
