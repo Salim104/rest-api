@@ -4,7 +4,8 @@
   "main": "app.js",
   "type": "module",
   "scripts": {
-    "dev": "node --watch app.js"
+    "dev": "node --watch app.js",
+    "image-cleanup": "node scripts/cleanup-images.js"
   },
   "keywords": [],
   "author": "SalimDevcodes",

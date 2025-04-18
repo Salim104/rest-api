@@ -18,15 +18,47 @@ const app = express();
 // Initialize database
 initDatabase();
 
+// Enhanced CORS configuration
+const corsOptions = {
+  origin: process.env.FRONTEND_URL || '*', // Allow specified frontend or any origin during development
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
+  credentials: true, // Allow cookies and credentials
+  maxAge: 86400 // Cache preflight requests for 24 hours
+};
+
 // Middleware
-app.use(cors());
+app.use(cors(corsOptions));
 
 // JSON and URL-encoded body parser
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// Serve static files from the public directory
-app.use(express.static(path.join(__dirname, 'public')));
+// Enhanced static file serving for public directory
+// This serves all files in the public directory
+app.use(express.static(path.join(__dirname, 'public'), {
+  maxAge: '1d', // Cache static files for 1 day
+  etag: true,   // Enable ETags for caching
+  lastModified: true // Enable Last-Modified headers
+}));
+
+// Dedicated route for images with specific cache settings
+app.use('/images', express.static(path.join(__dirname, 'public/images'), {
+  maxAge: '7d', // Cache images for 7 days
+  immutable: true, // Indicates the file won't change during cache lifetime
+  setHeaders: (res, path) => {
+    // Set additional headers for images
+    res.setHeader('Cache-Control', 'public, max-age=604800, immutable');
+    // Set proper content type based on file extension
+    if (path.endsWith('.jpg') || path.endsWith('.jpeg')) {
+      res.setHeader('Content-Type', 'image/jpeg');
+    } else if (path.endsWith('.png')) {
+      res.setHeader('Content-Type', 'image/png');
+    } else if (path.endsWith('.gif')) {
+      res.setHeader('Content-Type', 'image/gif');
+    }
+  }
+}));
 
 // Routes
 app.use('/api/auth', authRoutes);
@@ -45,4 +77,7 @@ app.get('/', (req, res) => {
 // Start server
 app.listen(PORT, () => {
   console.log(`Server is running on port ${PORT}`);
+  console.log(`CORS enabled for: ${corsOptions.origin}`);
+  console.log(`Static files served from: ${path.join(__dirname, 'public')}`);
+  console.log(`Images available at: http://localhost:${PORT}/images/`);
 });
